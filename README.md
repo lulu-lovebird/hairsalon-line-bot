@@ -26,6 +26,12 @@
 - 👤 客人資料管理
 - 📊 數據報表
 
+## 📖 營運與設定手冊
+
+關於每日營業時間調整、每週固定公休、連假店休與設計師排班請假，請參閱：
+* 📘 [店長日常營運與設定手冊 (docs/OPERATION_GUIDE.md)](docs/OPERATION_GUIDE.md)
+* 📗 [純 Google 試算表極簡方案指南 (gas/README.md)](gas/README.md)
+
 ## 快速開始
 
 ### 1. 安裝依賴
