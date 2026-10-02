@@ -63,6 +63,7 @@ npm run dev
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase URL（前端用）|
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Anon Key（前端用）|
 | `NEXT_PUBLIC_APP_URL` | 應用程式公開 URL |
+| `JWT_SECRET` | Admin API JWT 簽名密鑰（選填，未設定時 fallback 至 LINE_CHANNEL_SECRET）|
 | `CRON_SECRET` | Cron Job 驗證密碼 |
 | `SALON_NAME` | 店家名稱 |
 | `SALON_ADDRESS` | 店家地址 |
@@ -71,10 +72,15 @@ npm run dev
 ## 開發進度
 
 - [x] Phase 1：環境建置 & 資料庫 Schema
-- [ ] Phase 2：LINE Bot 核心流程（預約/查詢/取消）
-- [ ] Phase 3：提醒排程服務
-- [ ] Phase 4：LIFF Admin 後台完整 UI
-- [ ] Phase 5：整合測試 & 上線
+- [x] Phase 2：LINE Bot 核心流程（預約/查詢/取消 Stateless 狀態機）
+- [x] Phase 3：提醒排程服務（24h 晚間推播 + 1h 窗口提醒）
+- [x] Phase 4：LIFF Admin 後台完整 UI（預約/設計師/服務/時段/顧客）
+- [x] Phase 5：安全強化（JWT 鑑權守衛）、數據報表 & 整合驗證
+
+---
+
+本專案由 **Bean, Bird & Badminton Tech Consulting** 開發並維護。  
+Copyright (c) 2026 Bean, Bird & Badminton Tech Consulting. All rights reserved.
 
 ## LINE 設定
 

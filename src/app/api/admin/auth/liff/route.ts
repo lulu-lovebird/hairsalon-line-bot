@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { signAdminToken } from '@/lib/jwt'
 
 export const runtime = 'nodejs'
 
@@ -39,9 +40,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '您沒有管理員權限' }, { status: 403 })
     }
 
-    // 回傳管理員資訊（Phase 4 再換為 signed JWT）
+    // 簽發 JWT Token
+    const token = signAdminToken({
+      line_uid: lineUid,
+      display_name: profile.name,
+    })
+
+    // 回傳管理員資訊與 Token
     return NextResponse.json({
       ok: true,
+      token,
       admin: {
         line_uid: lineUid,
         display_name: profile.name,

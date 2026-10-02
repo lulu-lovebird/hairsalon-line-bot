@@ -1,6 +1,9 @@
 import type { webhook } from '@line/bot-sdk'
 import { replyMessage, replyWithQuickReply } from '@/lib/line'
 import { supabaseAdmin } from '@/lib/supabase'
+import { todayTW, formatDateZH, formatTime } from '@/lib/date'
+import { format, addDays, parseISO } from 'date-fns'
+import { buildCancelQuickReplies } from '@/lib/bot/messages'
 import type { CustomerRow } from '@/types'
 
 export async function handleTextMessage(event: webhook.MessageEvent): Promise<void> {
@@ -79,13 +82,31 @@ async function upsertCustomer(lineUid: string): Promise<CustomerRow | null> {
   }
 }
 
-async function startBookingFlow(replyToken: string, lineUid: string): Promise<void> {
-  // Phase 2 will implement full booking flow
-  // For now, provide a simple entry point
+async function startBookingFlow(replyToken: string, _lineUid: string): Promise<void> {
+  const today = todayTW()
+  // 開放未來 30 天內預約，統一以 parseDateTW 為基準避免 UTC 跨日
+  const max = format(addDays(parseISO(today), 30), 'yyyy-MM-dd')
+
   await replyMessage(replyToken, [
+    { type: 'text', text: '📅 請選擇預約日期：' },
     {
-      type: 'text',
-      text: '📅 預約流程即將開放，請稍候！\n\n目前系統建置中，感謝您的耐心等候。',
+      type: 'template',
+      altText: '請選擇預約日期',
+      template: {
+        type: 'buttons',
+        text: '請選擇希望預約的日期（30 天內）',
+        actions: [
+          {
+            type: 'datetimepicker',
+            label: '選擇日期',
+            data: 'action=BOOKING_SELECT_STYLIST',
+            mode: 'date',
+            initial: today,
+            min: today,
+            max,
+          },
+        ],
+      },
     },
   ])
 }
@@ -102,7 +123,7 @@ async function showMyAppointments(replyToken: string, lineUid: string): Promise<
     return
   }
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = todayTW()  // UTC+8 台灣時區，修正原本使用 UTC 的 bug
   const { data: appointments } = await supabaseAdmin
     .from('appointments')
     .select('*, stylist:stylists(name), service:services(name)')
@@ -121,7 +142,7 @@ async function showMyAppointments(replyToken: string, lineUid: string): Promise<
     const stylistName = (apt.stylist as { name?: string } | null)?.name ?? '不限'
     const serviceName = (apt.service as { name?: string } | null)?.name ?? '未指定'
     const time = String(apt.start_time).substring(0, 5)
-    return `📌 ${apt.date} ${time}\n   設計師：${stylistName}\n   服務：${serviceName}\n   狀態：${statusLabel(String(apt.status))}\n   編號：${apt.code}`
+    return `📌 ${formatDateZH(String(apt.date))} ${time}\n   設計師：${stylistName}\n   服務：${serviceName}\n   狀態：${statusLabel(String(apt.status))}\n   編號：${String(apt.code)}`
   })
 
   await replyMessage(replyToken, [{
@@ -131,11 +152,42 @@ async function showMyAppointments(replyToken: string, lineUid: string): Promise<
 }
 
 async function startCancelFlow(replyToken: string, lineUid: string): Promise<void> {
-  // Phase 2 will implement full cancel flow
-  await replyMessage(replyToken, [{
-    type: 'text',
-    text: '❌ 取消預約功能即將開放，感謝耐心等候。',
-  }])
+  const { data: customer } = await supabaseAdmin
+    .from('customers')
+    .select('id')
+    .eq('line_uid', lineUid)
+    .single()
+
+  if (!customer) {
+    await replyMessage(replyToken, [{ type: 'text', text: '找不到您的預約紀錄。' }])
+    return
+  }
+
+  const today = todayTW()
+  const { data: appointments } = await supabaseAdmin
+    .from('appointments')
+    .select('id, code, date, start_time')
+    .eq('customer_id', customer.id)
+    .gte('date', today)
+    .in('status', ['pending', 'confirmed'])
+    .order('date', { ascending: true })
+    .order('start_time', { ascending: true })
+    .limit(10)
+
+  if (!appointments || appointments.length === 0) {
+    await replyMessage(replyToken, [{ type: 'text', text: '您目前沒有有效的預約可以取消。' }])
+    return
+  }
+
+  const items = buildCancelQuickReplies(
+    appointments as Array<{ id: string; code: string; date: string; start_time: string }>,
+  )
+
+  await replyWithQuickReply(
+    replyToken,
+    `您有 ${appointments.length} 筆有效預約，請選擇要取消的項目：`,
+    items,
+  )
 }
 
 function statusLabel(status: string): string {

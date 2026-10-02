@@ -29,6 +29,24 @@ export function formatTime(timeStr: string): string {
   return timeStr.substring(0, 5)
 }
 
+/**
+ * 安全解析 YYYY-MM-DD 字串為 Date（UTC 正午，避免時區位移影響 getDay()）
+ * new Date('2024-10-01') 在 Node.js 解析為 UTC 00:00，getDay() 可能差一天
+ */
+export function parseDateTW(dateStr: string): Date {
+  // 解析為 UTC 正午，不受本地時區影響
+  const [year, month, day] = dateStr.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0))
+}
+
+/** 取得台灣現在時間的 HH:MM 字串，供時段過濾使用 */
+export function nowTWHHMM(): string {
+  const now = nowTW()
+  const hh = String(now.getHours()).padStart(2, '0')
+  const mm = String(now.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
 /** 產生未來 N 天的日期清單 */
 export function getFutureDates(days: number, startFromTomorrow = true): string[] {
   const result: string[] = []

@@ -1,28 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { verifyAdminRequest } from '@/lib/jwt'
+import { todayTW, parseDateTW } from '@/lib/date'
+import { format, subDays, startOfMonth } from 'date-fns'
 
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
+  if (!verifyAdminRequest(req)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const { searchParams } = req.nextUrl
   const period = searchParams.get('period') ?? 'week'  // 'day' | 'week' | 'month'
 
-  const now = new Date()
+  const today = todayTW()
+  const todayDateObj = parseDateTW(today)
   let startDate: string
 
   if (period === 'day') {
-    startDate = now.toISOString().split('T')[0]
+    startDate = today
   } else if (period === 'month') {
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
-    startDate = firstDay.toISOString().split('T')[0]
+    startDate = format(startOfMonth(todayDateObj), 'yyyy-MM-dd')
   } else {
     // week: last 7 days
-    const weekAgo = new Date(now)
-    weekAgo.setDate(weekAgo.getDate() - 7)
-    startDate = weekAgo.toISOString().split('T')[0]
+    startDate = format(subDays(todayDateObj, 7), 'yyyy-MM-dd')
   }
 
-  const endDate = now.toISOString().split('T')[0]
+  const endDate = today
 
   // 各狀態計數
   const { data: statusCounts } = await supabaseAdmin

@@ -1,18 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { pushText } from '@/lib/line'
-import { formatTime, nowTW } from '@/lib/date'
+import { formatTime, nowTW, todayTW, parseDateTW } from '@/lib/date'
+import { format, addDays } from 'date-fns'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /**
  * 提醒排程端點 - 由 Vercel Cron Job 每 15 分鐘呼叫一次
- * Vercel cron 設定於 vercel.json
+ * vercel.json: { "path": "/api/notify/cron", "schedule": "* /15 * * * *" }
+ *
+ * 24h 提醒：每晚 20:00～20:14 統一對明天所有預約發送（避免半夜擾民）
+ * 1h  提醒：每次執行時，對 1 小時後 ±7 分鐘內的預約發送
  */
 export async function GET(req: NextRequest) {
   // 驗證 Cron Secret 防止未授權呼叫
-  const secret = req.headers.get('x-cron-secret') ?? req.nextUrl.searchParams.get('secret')
+  // 支援 1. Vercel 原生 Cron Header (Authorization: Bearer <CRON_SECRET>)
+  //      2. 自訂 Header (x-cron-secret)
+  //      3. Query parameter (?secret=)
+  const authHeader = req.headers.get('authorization')
+  const bearerSecret = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : null
+  const headerSecret = req.headers.get('x-cron-secret')
+  const querySecret = req.nextUrl.searchParams.get('secret')
+
+  const secret = bearerSecret ?? headerSecret ?? querySecret
   if (secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -25,52 +37,56 @@ export async function GET(req: NextRequest) {
   let errors = 0
 
   try {
-    // 取得需要發 24 小時提醒的預約
-    const tomorrow = new Date(now)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    const tomorrowDate = tomorrow.toISOString().split('T')[0]
+    // ── 24h 提醒：僅在每晚 20:00～20:14（台灣時間）執行 ──────────────────
+    if (now.getHours() === 20) {
+      const tomorrowDate = format(addDays(parseDateTW(todayTW()), 1), 'yyyy-MM-dd')
 
-    const { data: appts24h } = await supabaseAdmin
-      .from('appointments')
-      .select('*, customer:customers(line_uid, display_name), stylist:stylists(name), service:services(name)')
-      .eq('date', tomorrowDate)
-      .eq('reminder_24h_sent', false)
-      .in('status', ['pending', 'confirmed'])
-      // 只發送時間在 now 的 HH:MM ± 15 分鐘內的預約（模糊匹配，避免漏發）
-      // 實際依部署 cron 頻率調整
-      .limit(50)
+      const { data: appts24h } = await supabaseAdmin
+        .from('appointments')
+        .select('*, customer:customers(line_uid, display_name), stylist:stylists(name), service:services(name)')
+        .eq('date', tomorrowDate)
+        .eq('reminder_24h_sent', false)
+        .in('status', ['pending', 'confirmed'])
+        .limit(100)
 
-    for (const apt of (appts24h ?? [])) {
-      try {
-        const lineUid = (apt.customer as { line_uid: string } | null)?.line_uid
-        if (!lineUid) continue
+      for (const apt of appts24h ?? []) {
+        try {
+          const lineUid = (apt.customer as { line_uid: string } | null)?.line_uid
+          if (!lineUid) continue
 
-        const stylistName = (apt.stylist as { name?: string } | null)?.name ?? '（不限設計師）'
-        const serviceName = (apt.service as { name?: string } | null)?.name ?? ''
-        const time = formatTime(apt.start_time)
+          const stylistName = (apt.stylist as { name?: string } | null)?.name ?? '（不限設計師）'
+          const serviceName = (apt.service as { name?: string } | null)?.name ?? ''
+          const time = formatTime(apt.start_time)
 
-        await pushText(
-          lineUid,
-          `📅 預約提醒\n\n明天 ${time} 有您在 ${salonName} 的預約\n設計師：${stylistName}${serviceName ? `\n服務：${serviceName}` : ''}\n預約編號：${apt.code}\n\n請準時到來，我們等您！`
-        )
+          await pushText(
+            lineUid,
+            `📅 預約提醒\n\n明天 ${time} 有您在 ${salonName} 的預約\n設計師：${stylistName}${serviceName ? `\n服務：${serviceName}` : ''}\n預約編號：${apt.code}\n\n請準時到來，我們等您！`
+          )
 
-        await supabaseAdmin
-          .from('appointments')
-          .update({ reminder_24h_sent: true })
-          .eq('id', apt.id)
+          await supabaseAdmin
+            .from('appointments')
+            .update({ reminder_24h_sent: true })
+            .eq('id', apt.id)
 
-        sent24h++
-      } catch (e) {
-        console.error('[cron] 24h reminder error:', e)
-        errors++
+          sent24h++
+        } catch (e) {
+          console.error('[cron] 24h reminder error:', e)
+          errors++
+        }
       }
     }
 
-    // 取得需要發 1 小時提醒的預約
-    const oneHourLater = new Date(now)
-    oneHourLater.setHours(oneHourLater.getHours() + 1)
-    const todayDate = now.toISOString().split('T')[0]
-    const oneHourHHMM = `${String(oneHourLater.getHours()).padStart(2, '0')}:${String(oneHourLater.getMinutes()).padStart(2, '0')}`
+    // ── 1h 提醒：每次執行，±7 分鐘窗口（適配 15 分鐘 cron 間隔） ─────────
+    const todayDate = todayTW()
+    const targetMin = now.getHours() * 60 + now.getMinutes() + 60
+    const windowStart = targetMin - 7
+    const windowEnd = targetMin + 7
+
+    const toHHMM = (mins: number): string => {
+      const h = Math.floor(mins / 60) % 24
+      const m = mins % 60
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+    }
 
     const { data: appts1h } = await supabaseAdmin
       .from('appointments')
@@ -78,11 +94,11 @@ export async function GET(req: NextRequest) {
       .eq('date', todayDate)
       .eq('reminder_1h_sent', false)
       .in('status', ['pending', 'confirmed'])
-      .gte('start_time', `${oneHourHHMM}:00`)
-      .lte('start_time', `${oneHourHHMM}:59`)
+      .gte('start_time', `${toHHMM(windowStart)}:00`)
+      .lte('start_time', `${toHHMM(windowEnd)}:59`)
       .limit(50)
 
-    for (const apt of (appts1h ?? [])) {
+    for (const apt of appts1h ?? []) {
       try {
         const lineUid = (apt.customer as { line_uid: string } | null)?.line_uid
         if (!lineUid) continue

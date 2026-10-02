@@ -2,6 +2,22 @@ import type { webhook } from '@line/bot-sdk'
 import { handleTextMessage } from './text-handler'
 import { handlePostback } from './postback-handler'
 
+/** 合併 datetimepicker postback.params 到 postback.data 的 URLSearchParams */
+function mergePostbackParams(event: webhook.PostbackEvent): webhook.PostbackEvent {
+  const dtParams = event.postback.params as Record<string, string> | undefined
+  if (!dtParams) return event
+
+  const merged = new URLSearchParams(event.postback.data)
+  for (const [k, v] of Object.entries(dtParams)) {
+    if (!merged.has(k)) merged.set(k, v)
+  }
+
+  return {
+    ...event,
+    postback: { ...event.postback, data: merged.toString() },
+  }
+}
+
 export async function handleLineEvent(event: webhook.Event): Promise<void> {
   try {
     switch (event.type) {
@@ -11,7 +27,7 @@ export async function handleLineEvent(event: webhook.Event): Promise<void> {
         }
         break
       case 'postback':
-        await handlePostback(event)
+        await handlePostback(mergePostbackParams(event))
         break
       case 'follow':
         await handleFollow(event)

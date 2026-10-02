@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { getFutureDates } from '@/lib/date'
-import type { SlotTemplateRow, SlotOverrideRow, AvailableSlot } from '@/types'
+import { getFutureDates, parseDateTW } from '@/lib/date'
+import type { SlotTemplateRow, SlotOverrideRow, AvailableSlot, StylistRow } from '@/types'
 
 export const runtime = 'nodejs'
 
@@ -30,17 +30,45 @@ export async function GET(req: NextRequest) {
     .select('*')
     .in('date', dates)
 
-  // 取得未來預約計數（聚合）
+  // 取得未來預約計數（聚合），加入 duration_min 以支援時長重疊判定
   const { data: bookingCounts } = await supabaseAdmin
     .from('appointments')
-    .select('date, start_time, stylist_id')
+    .select('date, start_time, duration_min, stylist_id')
     .in('date', dates)
     .in('status', ['pending', 'confirmed'])
+
+  // 取得所有有效設計師及排班
+  const { data: allStylists } = await supabaseAdmin
+    .from('stylists')
+    .select('id, name, avatar_url')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+
+  const { data: allSchedules } = await supabaseAdmin
+    .from('stylist_schedules')
+    .select('stylist_id, day_of_week, start_time, end_time')
+    .eq('is_active', true)
+
+  // 建立 dayOfWeek → stylist[] 的 map
+  const stylistsByDow = new Map<number, Array<Pick<StylistRow, 'id' | 'name' | 'avatar_url'>>>()
+  for (const schedule of allSchedules ?? []) {
+    const s = schedule as { stylist_id: string; day_of_week: number; start_time: string; end_time: string }
+    const stylist = (allStylists as Pick<StylistRow, 'id' | 'name' | 'avatar_url'>[] ?? []).find(
+      (st) => st.id === s.stylist_id,
+    )
+    if (!stylist) continue
+    const list = stylistsByDow.get(s.day_of_week) ?? []
+    // 同一設計師可能有多個 schedule row，避免重複加入
+    if (!list.find((item) => item.id === stylist.id)) {
+      list.push({ ...stylist, _schedStart: s.start_time, _schedEnd: s.end_time } as Pick<StylistRow, 'id' | 'name' | 'avatar_url'>)
+    }
+    stylistsByDow.set(s.day_of_week, list)
+  }
 
   const slots: AvailableSlot[] = []
 
   for (const date of dates) {
-    const dayOfWeek = new Date(date).getDay()
+    const dayOfWeek = parseDateTW(date).getUTCDay()
 
     // 決定此日期的有效時段（override 優先）
     const dayTemplates = (templates as SlotTemplateRow[] ?? []).filter(
@@ -71,24 +99,52 @@ export async function GET(req: NextRequest) {
     for (const [startTime, slotConfig] of slotMap.entries()) {
       if (!slotConfig.is_open) continue
 
-      // 計算此時段已被預約幾位
-      const booked = ((bookingCounts ?? []) as Array<{ date: string; start_time: string; stylist_id: string | null }>)
-        .filter((b) => {
-          if (b.date !== date) return false
-          if (b.start_time !== startTime) return false
-          if (stylistId && b.stylist_id !== stylistId) return false
-          return true
-        }).length
+      // 計算此時段已被預約幾位（用時長重疊判定）
+      const slotStartMin = timeToMin(startTime)
+      const slotEndMin = slotStartMin + slotConfig.duration_min
 
-      const availableCount = slotConfig.max_capacity - booked
+      const allBookings = ((bookingCounts ?? []) as Array<{
+        date: string
+        start_time: string
+        duration_min: number
+        stylist_id: string | null
+      }>).filter((b) => {
+        if (b.date !== date) return false
+        if (stylistId && b.stylist_id !== stylistId) return false
+        // 時長重疊判定
+        const bStart = timeToMin(b.start_time)
+        const bEnd = bStart + b.duration_min
+        return slotStartMin < bEnd && slotEndMin > bStart
+      })
+
+      const availableCount = slotConfig.max_capacity - allBookings.length
       if (availableCount <= 0) continue
+
+      // 已有預約的設計師 ID set（用於從可用設計師清單中剥除）
+      const bookedStylistIds = new Set(
+        allBookings.map((b) => b.stylist_id).filter((id): id is string => id !== null),
+      )
+
+      // 過濾出當天在排班時間內、且未被預約、且符合 stylistId 篩選的設計師
+      const dowStylists = stylistsByDow.get(dayOfWeek) ?? []
+      const availableStylists = dowStylists.filter((s) => {
+        if (stylistId && s.id !== stylistId) return false
+        // 設計師已有重疊預約 → 從可用清單中剥除
+        if (bookedStylistIds.has(s.id)) return false
+        // 確認設計師排班時間涵蓋此時段
+        const sched = s as Pick<StylistRow, 'id' | 'name' | 'avatar_url'> & { _schedStart?: string; _schedEnd?: string }
+        if (sched._schedStart && sched._schedEnd) {
+          if (startTime < sched._schedStart || startTime >= sched._schedEnd) return false
+        }
+        return true
+      }).map(({ id, name, avatar_url }) => ({ id, name, avatar_url }))
 
       slots.push({
         date,
         start_time: startTime,
         duration_min: slotConfig.duration_min,
         available_count: availableCount,
-        stylists: [],  // Phase 2: populate with available stylists
+        stylists: availableStylists,
       })
     }
   }
@@ -100,4 +156,10 @@ export async function GET(req: NextRequest) {
   })
 
   return NextResponse.json({ slots })
+}
+
+/** HH:MM:SS or HH:MM → 分鐘數 */
+function timeToMin(timeStr: string): number {
+  const [h, m] = timeStr.split(':').map(Number)
+  return h * 60 + m
 }
