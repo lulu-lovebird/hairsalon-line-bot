@@ -42,11 +42,11 @@
 
 | 屬性名稱 (Key) | 說明與範例值 |
 |---|---|
-| `LINE_CHANNEL_ACCESS_TOKEN` | LINE Developers Console 取得的 **Channel access token (long-lived)** |
-| `LINE_CHANNEL_SECRET` | LINE Developers Console 取得的 **Channel secret** |
+| `LINE_CHANNEL_ACCESS_TOKEN` | **(必填)** LINE Developers Console 取得的 **Channel access token (long-lived)** |
 | `SALON_NAME` | 店名（例如：`Classic Barber 理髮廳`） |
 | `SALON_ADDRESS` | 店址（例如：`台北市大安區忠孝東路四段 100 號`） |
-| `ADMIN_EMAIL` | *(選填)* 接收預約/取消通知的信箱。多個可用逗號分隔（如 `boss@gmail.com,staff@gmail.com`）。未填寫時會自動寄給 Google 試算表擁有者。 |
+| `ADMIN_EMAIL` | *(選填)* 接收預約/取消通知的信箱。未填寫時會自動寄給 Google 試算表擁有者。 |
+| `LINE_CHANNEL_SECRET` | *(選填)* LINE Channel Secret。注意：Google Apps Script 沙箱環境不轉發 HTTP Headers，此項在純 GAS 模式下作為備用。 |
 | `ENABLE_PUSH_REMINDER` | *(選填)* 是否啟用 LINE 主動提醒推播（預設 `true`）。若設為 `false` 則關閉所有主動推播，省下 100% 推播額度。 |
 | `ENABLE_1H_REMINDER` | *(選填)* 是否啟用「前 1 小時提醒」（預設 `true`）。**強烈推薦設為 `false`**：僅保留「前一晚 20:00 提醒」，每筆預約推播消耗從 2 則降為 1 則，每月免費預約容量直接翻倍至 200 筆！ |
 

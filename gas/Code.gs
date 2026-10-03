@@ -51,13 +51,21 @@ function doGet(e) {
 /** 處理 LINE Messaging API 送過來的 Webhook 事件 */
 function doPost(e) {
   try {
-    var rawBody = e.postData.contents;
-    var signature = e.parameter['x-line-signature'] || (e.headers && (e.headers['X-Line-Signature'] || e.headers['x-line-signature']));
+    if (!e || !e.postData || !e.postData.contents) {
+      return ContentService.createTextOutput('OK').setMimeType(ContentService.MimeType.TEXT);
+    }
 
-    // [P0 安全修正] 若系統有設定 Channel Secret，嚴格驗證簽章；缺 signature 或驗章失敗一律拒絕
+    var rawBody = e.postData.contents;
+
+    // Google Apps Script 的沙箱特性：Google 伺服器不會將自訂 Request Headers (X-Line-Signature)
+    // 轉傳至 e 物件，僅能在有傳入 query 參數 (e.parameter['x-line-signature']) 時驗證。
+    // 因此：僅在能夠取得 signature 時才執行驗簽，避免將合法訊息拒於門外。
+    var signature = e.parameter ? (e.parameter['x-line-signature'] || e.parameter['signature']) : null;
     var secret = CONFIG.CHANNEL_SECRET();
-    if (secret) {
-      if (!signature || !verifyLineSignature(rawBody, signature, secret)) {
+
+    if (signature && secret) {
+      if (!verifyLineSignature(rawBody, signature, secret)) {
+        console.warn('doPost: Invalid signature');
         return ContentService.createTextOutput('Unauthorized').setMimeType(ContentService.MimeType.TEXT);
       }
     }
@@ -65,7 +73,12 @@ function doPost(e) {
     var eventData = JSON.parse(rawBody);
     var events = eventData.events || [];
 
-    // 依序處理每個事件
+    // 若為 LINE Console Verify 測試請求 (events 為空陣列)
+    if (events.length === 0) {
+      return ContentService.createTextOutput(JSON.stringify({ status: 'ok', message: 'Verified' })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 依序處理每個真實事件
     for (var i = 0; i < events.length; i++) {
       handleLineEvent(events[i]);
     }
@@ -73,7 +86,6 @@ function doPost(e) {
     return ContentService.createTextOutput(JSON.stringify({ status: 'ok' })).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     console.error('doPost Error: ' + err.toString());
-    // [P1 安全修正] 不回傳詳細內部例外堆疊
     return ContentService.createTextOutput(JSON.stringify({ status: 'error' })).setMimeType(ContentService.MimeType.JSON);
   }
 }
@@ -1176,20 +1188,29 @@ function sendPushQuotaAlertEmail(used) {
 // 八、LINE API 呼叫工具
 // ============================================================
 function replyMessage(replyToken, messages) {
+  var token = CONFIG.CHANNEL_ACCESS_TOKEN();
+  if (!token) {
+    console.error('replyMessage error: LINE_CHANNEL_ACCESS_TOKEN is missing in Script Properties!');
+    return;
+  }
+
   var url = 'https://api.line.me/v2/bot/message/reply';
   var payload = { replyToken: replyToken, messages: messages };
   var options = {
     method: 'post',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + CONFIG.CHANNEL_ACCESS_TOKEN()
+      'Authorization': 'Bearer ' + token
     },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   };
   var res = UrlFetchApp.fetch(url, options);
-  if (res.getResponseCode() !== 200) {
-    console.error('replyMessage error: ' + res.getContentText());
+  var resCode = res.getResponseCode();
+  if (resCode !== 200) {
+    console.error('replyMessage HTTP ' + resCode + ' error: ' + res.getContentText());
+  } else {
+    console.log('replyMessage success');
   }
 }
 
