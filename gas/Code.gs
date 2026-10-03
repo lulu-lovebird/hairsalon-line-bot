@@ -693,6 +693,39 @@ function handleCancelConfirm(replyToken, userId, params) {
 // 五、試算表資料存取層 (Google Sheet Storage)
 // ============================================================
 
+/**
+ * [手動/首次初始化] 一次建立並初始化所有分頁
+ * 可以在 Apps Script 編輯器上方選擇「initSheets」並點選「執行」
+ */
+function initSheets() {
+  getOrCreateSheet(CONFIG.SHEET_NAMES.APPOINTMENTS);
+  getOrCreateSheet(CONFIG.SHEET_NAMES.SERVICES);
+  getOrCreateSheet(CONFIG.SHEET_NAMES.STYLISTS);
+  getOrCreateSheet(CONFIG.SHEET_NAMES.SLOTS);
+
+  // 嘗試移除 Google 試算表剛建立時預設的空白「工作表1」或「Sheet1」
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var defaultSheets = ['工作表1', 'Sheet1'];
+  for (var i = 0; i < defaultSheets.length; i++) {
+    var def = ss.getSheetByName(defaultSheets[i]);
+    if (def && ss.getSheets().length > 1) {
+      try { ss.deleteSheet(def); } catch (e) {}
+    }
+  }
+
+  SpreadsheetApp.getActiveSpreadsheet().toast('4 個分頁已成功建立並初始化完成！', '✂️ 系統初始化成功', 5);
+}
+
+/**
+ * 試算表開啟時自動建立選單
+ */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('✂️ 理髮店系統')
+    .addItem('🚀 初始化/檢查所有分頁', 'initSheets')
+    .addToUi();
+}
+
 /** 取得或初始化工作表 */
 function getOrCreateSheet(sheetName) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
