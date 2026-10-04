@@ -960,7 +960,7 @@ function sendDailyClosingEmail(dateStr, recipient) {
 
     var status = data[i][9];
     var stylist = data[i][4] || '未指定';
-    var actualPrice = parseFloat(data[i][15] || data[i][14] || '0') || 0;
+    var actualPrice = getAppointmentPrice(data[i]);
 
     totalBookings++;
     if (status === 'completed') {
@@ -1070,7 +1070,7 @@ function queryMonthlySummaryDialog() {
 
     var status = data[i][9];
     var stylist = data[i][4] || '未指定';
-    var actualPrice = parseFloat(data[i][15] || data[i][14] || '0') || 0;
+    var actualPrice = getAppointmentPrice(data[i]);
 
     totalCount++;
     if (status === 'completed') {
@@ -1945,49 +1945,59 @@ function getStaffInfoByUid(uid) {
   return null;
 }
 
-/** 處理設計師金鑰綁定 (例：綁定 HS-8K2M) */
+/** 處理設計師金鑰綁定 (例：綁定 HS-A8C3F2B1) */
 function handleStylistBinding(replyToken, userId, code) {
   if (!code) {
-    replyMessage(replyToken, [{ type: 'text', text: '請輸入正確的綁定格式，例如：綁定 HS-8K2M' }]);
+    replyMessage(replyToken, [{ type: 'text', text: '請輸入正確的綁定格式，例如：綁定 HS-A8C3F2B1' }]);
     return;
   }
 
-  var sheet = getOrCreateSheet(CONFIG.SHEET_NAMES.STYLISTS);
-  var data = sheet.getDataRange().getValues();
-  var matchedRow = -1;
-  var staffName = '';
-  var staffRole = '';
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    var sheet = getOrCreateSheet(CONFIG.SHEET_NAMES.STYLISTS);
+    var data = sheet.getDataRange().getValues();
+    var matchedRow = -1;
+    var staffName = '';
+    var staffRole = '';
 
-  for (var i = 1; i < data.length; i++) {
-    var storedCode = (data[i][7] || '').toString().trim();
-    if (storedCode && storedCode.toUpperCase() === code.toUpperCase()) {
-      matchedRow = i + 1;
-      staffName = data[i][0];
-      staffRole = data[i][6] || '設計師';
-      break;
+    for (var i = 1; i < data.length; i++) {
+      var storedCode = (data[i][7] || '').toString().trim();
+      if (storedCode && storedCode.toUpperCase() === code.toUpperCase()) {
+        matchedRow = i + 1;
+        staffName = data[i][0];
+        staffRole = data[i][6] || '設計師';
+        break;
+      }
     }
+
+    if (matchedRow === -1) {
+      replyMessage(replyToken, [{ type: 'text', text: '❌ 綁定失敗：無效的金鑰碼。請向店長索取正確的綁定碼！' }]);
+      return;
+    }
+
+    // 寫入 LINE UID 並清空一次性綁定碼
+    sheet.getRange(matchedRow, 6).setValue(userId);
+    sheet.getRange(matchedRow, 8).setValue('');
+
+    var roleName = staffRole === 'owner' ? '👑 店長' : '💇 設計師';
+    replyMessage(replyToken, [{
+      type: 'text',
+      text: '🎉 恭喜 ' + staffName + '（' + roleName + '）身分綁定成功！\n\n' +
+            '您現在可以使用專屬指令：\n' +
+            '• 「今日行程」：查看今日預約名單\n' +
+            '• 「明日行程」：查看明日預約名單\n' +
+            '• 「我的業績」：查詢本月累計業績\n' +
+            '• 「完成」：一鍵完成客人結帳\n' +
+            (staffRole === 'owner' ? '• 「日報」：全店今日營運與業績總結\n' : '')
+    }]);
+
+  } catch (err) {
+    console.error('handleStylistBinding error: ' + err);
+    replyMessage(replyToken, [{ type: 'text', text: '系統忙碌中，請稍後再試。' }]);
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
   }
-
-  if (matchedRow === -1) {
-    replyMessage(replyToken, [{ type: 'text', text: '❌ 綁定失敗：無效的金鑰碼。請向店長索取正確的綁定碼！' }]);
-    return;
-  }
-
-  // 寫入 LINE UID 並清空一次性綁定碼
-  sheet.getRange(matchedRow, 6).setValue(userId);
-  sheet.getRange(matchedRow, 8).setValue('');
-
-  var roleName = staffRole === 'owner' ? '👑 店長' : '💇 設計師';
-  replyMessage(replyToken, [{
-    type: 'text',
-    text: '🎉 恭喜 ' + staffName + '（' + roleName + '）身分綁定成功！\n\n' +
-          '您現在可以使用專屬指令：\n' +
-          '• 「今日行程」：查看今日預約名單\n' +
-          '• 「明日行程」：查看明日預約名單\n' +
-          '• 「我的業績」：查詢本月累計業績\n' +
-          '• 「完成」：一鍵完成客人結帳\n' +
-          (staffRole === 'owner' ? '• 「日報」：全店今日營運與業績總結\n' : '')
-  }]);
 }
 
 /** 顯示設計師特定日期的行程清單 */
@@ -2052,7 +2062,7 @@ function showStaffRevenue(replyToken, staff) {
 
     if (rowDate.indexOf(currentMonth) === 0 && rowStylist === staff.name && status === 'completed') {
       totalCount++;
-      totalRevenue += parseFloat(data[i][15] || data[i][14] || '0') || 0;
+      totalRevenue += getAppointmentPrice(data[i]);
     }
   }
 
@@ -2232,6 +2242,19 @@ function dailyClosingReportScheduled() {
   }
 }
 
+/** 統一取得預約列之實收金額 (若實收欄非空則優先採用，包含 NT$ 0，否則取定價) */
+function getAppointmentPrice(row) {
+  if (!row) return 0;
+  // 欄 16 (index 15): 實收金額；欄 15 (index 14): 定價
+  if (row[15] !== '' && row[15] !== undefined && row[15] !== null) {
+    return parseFloat(row[15]) || 0;
+  }
+  if (row[14] !== '' && row[14] !== undefined && row[14] !== null) {
+    return parseFloat(row[14]) || 0;
+  }
+  return 0;
+}
+
 /** 避免 Google 試算表公式注入攻擊 (若以 =, +, -, @ 開頭則前綴 ') */
 function sanitizeFormulaInput(input) {
   if (!input) return '';
@@ -2260,7 +2283,7 @@ function showOwnerDailySummary(replyToken, dateStr) {
 
     var status = data[i][9];
     var stylist = data[i][4] || '未指定';
-    var actualPrice = parseFloat(data[i][15] || data[i][14] || '0') || 0;
+    var actualPrice = getAppointmentPrice(data[i]);
 
     totalBookings++;
     if (status === 'completed') {
