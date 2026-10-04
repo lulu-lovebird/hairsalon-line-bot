@@ -1,6 +1,8 @@
 {
   "name": "hairsalon-line-bot",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "理髮小幫手 - 理髮店 LINE 智慧預約與管理系統",
+  "author": "Bean, Bird & Badminton Tech Consulting",
   "license": "MIT",
   "scripts": {
     "dev": "next dev",
